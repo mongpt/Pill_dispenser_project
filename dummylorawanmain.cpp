@@ -87,7 +87,7 @@ int main(void) {
             switch (lorawanState) {
                 case 0:                         /*    Connecting to Lora module    */
                     while (MAX_COUNT > count++) {
-                        retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
+                        retval_bool = loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
                         if (true == retval_bool) {
                             if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                                 printf("Comparison->match for: %s\n", retval_str);
@@ -107,7 +107,8 @@ int main(void) {
                         lora_comm = false;
                     }
                 case 1:                         /*            MODE             */
-                    retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
+                    retval_bool = loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time,
+                                                    retval_str);
                     if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
@@ -128,7 +129,8 @@ int main(void) {
                         break;
                     }
                 case 2:                         /*           APIKEY            */
-                    retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
+                    retval_bool = loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time,
+                                                    retval_str);
                     if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
@@ -149,7 +151,8 @@ int main(void) {
                         break;
                     }
                 case 3:                         /*           CLASS             */
-                    retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
+                    retval_bool = loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time,
+                                                    retval_str);
                     if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
@@ -170,7 +173,8 @@ int main(void) {
                         break;
                     }
                 case 4:                         /*            PORT             */
-                    retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
+                    retval_bool = loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time,
+                                                    retval_str);
                     if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
@@ -191,7 +195,8 @@ int main(void) {
                         break;
                     }
                case 5:                         /*            JOIN             */
-                   retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
+                   retval_bool = loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time,
+                                                   retval_str);
                     if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
