@@ -1,25 +1,55 @@
+#include <stdio.h>
+#include <string.h>
 #include "pico/time.h"
 #include "hardware/uart.h"
 #include "hardware/irq.h"
 #include "uart.h"
 #include "lorawan.h"
 
-#if 0
-#define UART_NR 0
-#define UART_TX_PIN 0
-#define UART_RX_PIN 1
+#ifndef DEBUG_PRINT
+#define DBG_PRINT(f_, ...)  printf((f_), ##__VA_ARGS__)
 #else
-#define UART_NR 1
-#define UART_TX_PIN 4
-#define UART_RX_PIN 5
+#define DBG_PRINT(f_, ...)
 #endif
 
-#define BAUD_RATE 9600
-#define MAX_COUNT 5
-
-#define STRLEN 80
-
 static const int uart_nr = UART_NR;
+static volatile uint lorawanState = 0;
+static lorawan_item lorawan[] = {{"AT\r\n", "+AT: OK\r\n", STD_WAITING_TIME},
+                                 {"AT+MODE=LWOTAA\r\n", "+MODE: LWOTAA\r\n", STD_WAITING_TIME},
+                                 {"AT+KEY=APPKEY,\"511F30D4D81E7B806536733DE7155FDE\"\r\n", "+KEY: APPKEY 511F30D4D81E7B806536733DE7155FDE\r\n", STD_WAITING_TIME},  // Gemma
+                                 //{"AT+KEY=APPKEY,\"83A228D811E594812D8735EDDCCE28D0\"\r\n", "+KEY: APPKEY 83A228D811E594812D8735EDDCCE28D0\r\n", STD_WAITING_TIME},  // Mong
+                                 //{"AT+KEY=APPKEY,\"3D036E4388F937105A649BA6B0AD6366\"\r\n", "+KEY: APPKEY 3D036E4388F937105A649BA6B0AD6366\r\n", STD_WAITING_TIME},  // Xuan
+                                 {"AT+CLASS=A\r\n", "+CLASS: A\r\n", STD_WAITING_TIME},
+                                 {"AT+PORT=8\r\n", "+PORT: 8\r\n", STD_WAITING_TIME},
+                                 {"AT+JOIN\r\n", "+JOIN: Starting\r\n+JOIN: NORMAL\r\n+JOIN: NetID 000024 DevAddr 48:00:00:01\r\n+JOIN: Done\r\n", MSG_WAITING_TIME}};
+
+bool loraInit() {
+
+    uint count = 0;
+
+    uart_setup(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE);
+
+    while (true) {
+        if (0 == lorawanState) {                         /*    Connecting to Lora module    */
+            while (MAX_COUNT > count++) {
+                if(true == retvalChecker()) {
+                    lorawanState++;
+                }
+            }
+            if (MAX_COUNT == count) {
+                DBG_PRINT("Attempted to connect 5 times, Lorawan module not responding.\n");
+                return false;
+            }
+        }
+        for (lorawanState; lorawanState < sizeof(lorawan)/sizeof(lorawan[0]); lorawanState++) {
+            if (false == retvalChecker()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
 
 bool loraCommunication(const char* command, const uint sleep_time, char* str) {
     int pos = 0;
@@ -31,4 +61,43 @@ bool loraCommunication(const char* command, const uint sleep_time, char* str) {
         return true;
     }
     return false;
+}
+
+bool loraMsg(const char *message, size_t msg_size, char *return_message) {
+
+    const char start_tag[] = "AT+MSG=\"";
+    const char end_tag[] = "\"\r\n";
+    char lorawan_message[STRLEN];
+
+    if (msg_size > STRLEN-strlen(start_tag)-strlen(end_tag)-1)
+        return false;
+
+    strcpy(lorawan_message, start_tag);
+    strncpy(&lorawan_message[strlen(start_tag)], message, STRLEN-strlen(start_tag)-strlen(end_tag)-1);
+    strcat(lorawan_message, end_tag);
+    lorawan_message[STRLEN-1] = '\0';
+    DBG_PRINT("%s", lorawan_message);
+    if(true == loraCommunication(lorawan_message, MSG_WAITING_TIME, return_message)) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool retvalChecker() {
+    char return_message[STRLEN];
+
+    if (true == loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, return_message)) {
+        if (strcmp(lorawan[lorawanState].retval, return_message) == 0) {
+            DBG_PRINT("Comparison->same for: %s\n", return_message);
+            return true;
+        } else {
+            DBG_PRINT("Comparison->no match, return_message: %s lorawan[%d].retval: %s\n", return_message, lorawanState, lorawan[lorawanState].retval);
+            DBG_PRINT("Exiting lora communication.\n");
+            return false;
+        }
+    } else {
+        DBG_PRINT("[%d] command failed, exiting lora communication.\n", lorawanState);
+        return false;
+    }
 }
