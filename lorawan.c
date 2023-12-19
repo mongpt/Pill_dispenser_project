@@ -1,4 +1,6 @@
 #include "pico/time.h"
+#include "hardware/uart.h"
+#include "hardware/irq.h"
 #include "uart.h"
 #include "lorawan.h"
 
