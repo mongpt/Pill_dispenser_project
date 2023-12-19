@@ -22,6 +22,12 @@ add_compile_options(-Wall
 # Tell CMake where to find the executable source file
 add_executable(Pill_dispenser_project
         main.c
+        uart.c
+        uart.h
+        ring_buffer.c
+        ring_buffer.h
+        lorawan.c
+        lorawan.h
 )
 
 # Create map/bin/hex/uf2 files
@@ -32,6 +38,8 @@ target_link_libraries(Pill_dispenser_project
         pico_stdlib
         hardware_pwm
         hardware_i2c
+        hardware_uart
+        hardware_gpio
 )
 
 # Enable usb output, disable uart output
