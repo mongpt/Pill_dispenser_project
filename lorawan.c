@@ -1,11 +1,5 @@
-#include <stdio.h>
-#include <string.h>
-#include <ctype.h>
-#include "pico/stdlib.h"
 #include "pico/time.h"
-#include "hardware/gpio.h"
 #include "uart.h"
-#include "hardware/pwm.h"
 #include "lorawan.h"
 
 #if 0
@@ -25,7 +19,7 @@
 
 static const int uart_nr = UART_NR;
 
-bool generic_lora(const char* command, const uint sleep_time, char* str) {
+bool loraCommunication(const char* command, const uint sleep_time, char* str) {
     int pos = 0;
     uart_send(uart_nr, command);
     sleep_ms(sleep_time);
