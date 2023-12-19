@@ -5,7 +5,6 @@
 #include "pico/time.h"
 #include "hardware/gpio.h"
 #include "uart.h"
-#include "hardware/pwm.h"
 #include "lorawan.h"
 
 #define SW_0 9
@@ -24,7 +23,6 @@
 #endif
 
 #define BAUD_RATE 9600
-#define WAITING_TIME 500
 #define MAX_COUNT 5
 
 #define MAX_COMMANDS 6 // 6 commands that needs to set up communication and network communication with lorawan, not including message
@@ -39,8 +37,8 @@ typedef struct lorawan_item_ {
 void buttonInit();
 bool repeatingTimerCallback(struct repeating_timer *t);
 
-volatile bool buttonEvent = false;
-volatile uint lorawanState = 0;
+static volatile bool buttonEvent = false;
+static volatile uint lorawanState = 0;
 
 int main(void) {
 
@@ -50,19 +48,19 @@ int main(void) {
 
     uart_setup(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE);
 
-    bool lora_comm = false;
     lorawan_item lorawan[MAX_COMMANDS] = {{"AT\r\n", "+AT: OK\r\n", 500},
                                           {"AT+MODE=LWOTAA\r\n", "+MODE: LWOTAA\r\n", 500},
                                           {"AT+KEY=APPKEY,\"511F30D4D81E7B806536733DE7155FDE\"\r\n", "+KEY: APPKEY 511F30D4D81E7B806536733DE7155FDE\r\n", 500},  // Gemma
-                                              //{"AT+KEY=APPKEY,\"83A228D811E594812D8735EDDCCE28D0\"\r\n", "+KEY: APPKEY 83A228D811E594812D8735EDDCCE28D0\r\n", 500},  // Mong
-                                              //{"AT+KEY=APPKEY,\"3D036E4388F937105A649BA6B0AD6366\"\r\n", "+KEY: APPKEY 3D036E4388F937105A649BA6B0AD6366\r\n", 500},  // Xuan
+                                           //{"AT+KEY=APPKEY,\"83A228D811E594812D8735EDDCCE28D0\"\r\n", "+KEY: APPKEY 83A228D811E594812D8735EDDCCE28D0\r\n", 500},  // Mong
+                                           //{"AT+KEY=APPKEY,\"3D036E4388F937105A649BA6B0AD6366\"\r\n", "+KEY: APPKEY 3D036E4388F937105A649BA6B0AD6366\r\n", 500},  // Xuan
                                           {"AT+CLASS=A\r\n", "+CLASS: A\r\n", 500},
                                           {"AT+PORT=8\r\n", "+PORT: 8\r\n", 500},
-                                          {"AT+JOIN\r\n", "+JOIN: Starting\r\n", 10000}}; // +JOIN: Starting
-                                                                                                                   // +JOIN: NORMAL
-                                                                                                                   // +JOIN: NetID 000000 DevAddr
-                                                                                                                   // +JOIN: Done
-    lorawan_item  lorawan_message;
+                                          {"AT+JOIN\r\n", "+JOIN: Starting\r\n", 5000}};  // +JOIN: Starting       sleep_time: testing needed
+                                                                                                                       // +JOIN: NORMAL
+                                                                                                                       // +JOIN: NetID 000000 DevAddr
+                                                                                                                       // +JOIN: Done
+    lorawan_item lorawan_message;  // Separatedly for message, has to be moved to case 6
+
     char retval_str[STRLEN];
 
     struct repeating_timer timer;
@@ -70,33 +68,37 @@ int main(void) {
 
     while (true) {
 
+        uint count = 0;
+        bool retval_bool = false;
+        bool lora_comm = false;
+
         if (buttonEvent) {
             buttonEvent = false;
             if (true == lora_comm) {
+                retval_bool = false;
+                lorawanState = 0;
                 lora_comm = false;
             } else {
                 lora_comm = true;
             }
         }
 
-        uint count = 0;
-        bool retval_bool = 0;
-
         if (true == lora_comm) {
             switch (lorawanState) {
-                case 0:                         /* Connecting to Lora module */
+                case 0:                         /*    Connecting to Lora module    */
                     while (MAX_COUNT > count++) {
                         retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
-                        if (retval_bool) {
+                        if (true == retval_bool) {
                             if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
-                                printf("Comparison->same for: %s\n", retval_str);
+                                printf("Comparison->match for: %s\n", retval_str);
                                 lorawanState = 1;
-                                retval_bool = 0;
+                                retval_bool = false;
                                 break;
                             } else {
-                                printf("Comparison-> not same, retval_str: %s\n", retval_str);
+                                printf("Comparison->no match, retval_str: %s lorawan[%d].retval: %s\n", retval_str, lorawanState, lorawan[lorawanState].retval);
                                 printf("Exiting lora communication.\n");
                                 lora_comm = false;
+                                break;
                             }
                         }
                     }
@@ -104,97 +106,108 @@ int main(void) {
                         printf("Lorawan module not responding.\n");
                         lora_comm = false;
                     }
-                case 1:                         /*          MODE          */
+                case 1:                         /*            MODE             */
                     retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
-                    if (retval_bool) {
+                    if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
                             lorawanState = 2;
+                            retval_bool = false;
                             break;
                         } else {
-                            printf("Comparison-> not same, retval_str: %s\n", retval_str);
+                            printf("Comparison->no match, retval_str: %s lorawan[%d].retval: %s\n", retval_str, lorawanState, lorawan[lorawanState].retval);
                             printf("Exiting lora communication.\n");
                             lorawanState = 0;
                             lora_comm = false;
+                            break;
                         }
                     } else {
-                        printf("Mode setting failed, exiting communication with LoraWan.\n");
+                        printf("MODE phase failed, exiting lora communication.\n");
                         lorawanState = 0;
                         lora_comm = false;
                         break;
                     }
-                case 2:                          /*     APIKEY      */
+                case 2:                         /*           APIKEY            */
                     retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
-                    if (retval_bool) {
+                    if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
                             lorawanState = 3;
+                            retval_bool = false;
                             break;
                         } else {
-                            printf("Comparison-> not same, retval_str: %s\n", retval_str);
+                            printf("Comparison->no match, retval_str: %s lorawan[%d].retval: %s\n", retval_str, lorawanState, lorawan[lorawanState].retval);
                             printf("Exiting lora communication.\n");
                             lorawanState = 0;
                             lora_comm = false;
+                            break;
                         }
                     } else {
-                        printf("Mode setting failed, exiting communication with LoRa.\n");
+                        printf("APIKEY failed, exiting lora communication.\n");
                         lorawanState = 0;
                         lora_comm = false;
                         break;
                     }
-                case 3:                          /*       CLASS       */
+                case 3:                         /*           CLASS             */
                     retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
-                    if (retval_bool) {
+                    if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
                             lorawanState = 4;
+                            retval_bool = false;
                             break;
                         } else {
-                            printf("Comparison-> not same, retval_str: %s\n", retval_str);
+                            printf("Comparison->no match, retval_str: %s lorawan[%d].retval: %s\n", retval_str, lorawanState, lorawan[lorawanState].retval);
                             printf("Exiting lora communication.\n");
                             lorawanState = 0;
                             lora_comm = false;
+                            break;
                         }
                     } else {
-                        printf("APIKEY phase failed, exiting communication with LoRa.\n");
+                        printf("CLASS phase failed, exiting lora communication.\n");
                         lorawanState = 0;
                         lora_comm = false;
                         break;
                     }
-                case 4:
+                case 4:                         /*            PORT             */
                     retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
-                    if (retval_bool) {
+                    if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
                             lorawanState = 5;
+                            retval_bool = false;
                             break;
                         } else {
-                            printf("Comparison-> not same, retval_str: %s\n", retval_str);
+                            printf("Comparison->no match, retval_str: %s lorawan[%d].retval: %s\n", retval_str, lorawanState, lorawan[lorawanState].retval);
                             printf("Exiting lora communication.\n");
                             lorawanState = 0;
                             lora_comm = false;
+                            break;
                         }
                     } else {
-                        printf("APIKEY phase failed, exiting communication with LoRa.\n");
+                        printf("PORT phase failed, exiting lora communication.\n");
                         lorawanState = 0;
                         lora_comm = false;
                         break;
                     }
-               case 5:
+               case 5:                         /*            JOIN             */
                    retval_bool = generic_lora(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, retval_str);
-                    if (retval_bool) {
+                    if (true == retval_bool) {
                         if (strcmp(lorawan[lorawanState].retval, retval_str) == 0) {
                             printf("Comparison->same for: %s\n", retval_str);
                             lora_comm = false;
+                            //lorawanState = 6;
+                            // retval_bool = false;
                             break;
                         } else {
-                            printf("Comparison-> not same, retval_str: %s\n", retval_str);
+                            printf("Comparison->no match, retval_str: %s lorawan[%d].retval: %s\n", retval_str, lorawanState, lorawan[lorawanState].retval);
                             printf("Exiting lora communication.\n");
                             lorawanState = 0;
                             lora_comm = false;
+                            break;
                         }
                     } else {
-                        printf("APIKEY phase failed, exiting communication with LoRa.\n");
+                        printf("JOIN phase failed, exiting communication with LoRa.\n");
                         lorawanState = 0;
                         lora_comm = false;
                         break;
@@ -211,7 +224,6 @@ void buttonInit() {
 }
 
 bool repeatingTimerCallback(struct repeating_timer *t) {
-
     // For SW_1: ON-OFF
     static uint button_state = 0, filter_counter = 0;
     uint new_state = 1;
@@ -228,6 +240,5 @@ bool repeatingTimerCallback(struct repeating_timer *t) {
     } else {
         filter_counter = 0;
     }
-
     return true;
 }
