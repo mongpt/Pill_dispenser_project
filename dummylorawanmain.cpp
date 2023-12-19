@@ -38,7 +38,6 @@ typedef struct lorawan_item_ {
 
 void buttonInit();
 bool repeatingTimerCallback(struct repeating_timer *t);
-void removeColonsAndLowercase(const char *input, char *output);
 
 volatile bool buttonEvent = false;
 volatile uint lorawanState = 0;
@@ -231,18 +230,4 @@ bool repeatingTimerCallback(struct repeating_timer *t) {
     }
 
     return true;
-}
-
-void removeColonsAndLowercase(const char *input, char *output) {
-    int inputLength = strlen(input);
-    int outputIndex = 0;
-
-    for (int i = 0; i < inputLength; i++) {
-        if (isxdigit((unsigned char) input[i])) {
-            output[outputIndex] = tolower(input[i]);
-            outputIndex++;
-        }
-    }
-
-    output[outputIndex] = '\0';
 }
