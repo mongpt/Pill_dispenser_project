@@ -32,7 +32,7 @@ bool loraInit() {
     while (true) {
         if (0 == lorawanState) {                         /*    Connecting to Lora module    */
             while (MAX_COUNT > count++) {
-                if(true == retvalChecker()) {
+                if(true == retvalChecker(lorawanState)) {
                     lorawanState++;
                 }
             }
@@ -42,11 +42,10 @@ bool loraInit() {
             }
         }
         for (lorawanState; lorawanState < sizeof(lorawan)/sizeof(lorawan[0]); lorawanState++) {
-            if (false == retvalChecker()) {
+            if (false == retvalChecker(lorawanState)) {
                 return false;
             }
         }
-
         return true;
     }
 }
@@ -84,20 +83,20 @@ bool loraMsg(const char *message, size_t msg_size, char *return_message) {
     }
 }
 
-bool retvalChecker() {
+bool retvalChecker(const int index) {
     char return_message[STRLEN];
 
-    if (true == loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, return_message)) {
-        if (strcmp(lorawan[lorawanState].retval, return_message) == 0) {
+    if (true == loraCommunication(lorawan[index].command, lorawan[index].sleep_time, return_message)) {
+        if (strcmp(lorawan[index].retval, return_message) == 0) {
             DBG_PRINT("Comparison->same for: %s\n", return_message);
             return true;
         } else {
-            DBG_PRINT("Comparison->no match, return_message: %s lorawan[%d].retval: %s\n", return_message, lorawanState, lorawan[lorawanState].retval);
+            DBG_PRINT("Comparison->no match, return_message: %s lorawan[%d].retval: %s\n", return_message, index, lorawan[index].retval);
             DBG_PRINT("Exiting lora communication.\n");
             return false;
         }
     } else {
-        DBG_PRINT("[%d] command failed, exiting lora communication.\n", lorawanState);
+        DBG_PRINT("[%d] command failed, exiting lora communication.\n", index);
         return false;
     }
 }
