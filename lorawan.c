@@ -62,7 +62,7 @@ bool loraCommunication(const char* command, const uint sleep_time, char* str) {
     return false;
 }
 
-bool loraMsg(const char *message, size_t msg_size, char *return_message) {
+bool loraMsg(const char* message, size_t msg_size, char* return_message) {
 
     const char start_tag[] = "AT+MSG=\"";
     const char end_tag[] = "\"\r\n";
