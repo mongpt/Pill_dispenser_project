@@ -30,7 +30,7 @@ bool loraInit() {
     uart_setup(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE);
 
     while (true) {
-        if (0 == lorawanState) {                         /*    Connecting to Lora module    */
+        if (0 == lorawanState) {
             while (MAX_COUNT > count++) {
                 if(true == retvalChecker(lorawanState)) {
                     lorawanState++;
@@ -41,8 +41,7 @@ bool loraInit() {
                 return false;
             }
         }
-        for (lorawanState; lorawanState < (sizeof(lorawan)/sizeof(lorawan[0]) - 1); lorawanState++) 0--*
-        {
+        for (lorawanState; lorawanState < (sizeof(lorawan)/sizeof(lorawan[0]) - 1); lorawanState++) {
             if (false == retvalChecker(lorawanState)) {
                 lorawanState = 0;
                 return false;
