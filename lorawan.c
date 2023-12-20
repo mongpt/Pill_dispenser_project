@@ -13,7 +13,7 @@
 #endif
 
 static const int uart_nr = UART_NR;
-static volatile uint lorawanState = 0;
+static volatile int lorawanState = 0;
 static lorawan_item lorawan[] = {{"AT\r\n", "+AT: OK\r\n", STD_WAITING_TIME},
                                  {"AT+MODE=LWOTAA\r\n", "+MODE: LWOTAA\r\n", STD_WAITING_TIME},
                                  {"AT+KEY=APPKEY,\"511F30D4D81E7B806536733DE7155FDE\"\r\n", "+KEY: APPKEY 511F30D4D81E7B806536733DE7155FDE\r\n", STD_WAITING_TIME},  // Gemma
@@ -21,11 +21,12 @@ static lorawan_item lorawan[] = {{"AT\r\n", "+AT: OK\r\n", STD_WAITING_TIME},
                                  //{"AT+KEY=APPKEY,\"3D036E4388F937105A649BA6B0AD6366\"\r\n", "+KEY: APPKEY 3D036E4388F937105A649BA6B0AD6366\r\n", STD_WAITING_TIME},  // Xuan
                                  {"AT+CLASS=A\r\n", "+CLASS: A\r\n", STD_WAITING_TIME},
                                  {"AT+PORT=8\r\n", "+PORT: 8\r\n", STD_WAITING_TIME},
-                                 {"AT+JOIN\r\n", "+JOIN: Starting\r\n+JOIN: NORMAL\r\n+JOIN: NetID 000024 DevAddr 48:00:00:01\r\n+JOIN: Done\r\n", MSG_WAITING_TIME}};
+                                 {"AT+JOIN\r\n", "", MSG_WAITING_TIME}};
 
 bool loraInit() {
-
     uint count = 0;
+    char return_message[STRLEN];
+    const char joined[] = "Network joined";
 
     uart_setup(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE);
 
@@ -41,12 +42,21 @@ bool loraInit() {
                 return false;
             }
         }
-        for (lorawanState; lorawanState < sizeof(lorawan)/sizeof(lorawan[0]); lorawanState++) {
+        for (lorawanState; lorawanState < (sizeof(lorawan)/sizeof(lorawan[0]) - 1); lorawanState++) {
             if (false == retvalChecker(lorawanState)) {
+                lorawanState = 0;
                 return false;
             }
         }
-        return true;
+        if (true == loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, return_message)) {
+            if (strstr(return_message, joined) != NULL) {
+                DBG_PRINT("Comparison->same for: %s\n", return_message);
+                lorawanState = 0;
+                return true;
+            }
+        }
+        lorawanState = 0;
+        return false;
     }
 }
 
@@ -68,8 +78,9 @@ bool loraMsg(const char* message, size_t msg_size, char* return_message) {
     const char end_tag[] = "\"\r\n";
     char lorawan_message[STRLEN];
 
-    if (msg_size > STRLEN-strlen(start_tag)-strlen(end_tag)-1)
+    if (msg_size > STRLEN-strlen(start_tag)-strlen(end_tag)-1) {
         return false;
+    }
 
     strcpy(lorawan_message, start_tag);
     strncpy(&lorawan_message[strlen(start_tag)], message, STRLEN-strlen(start_tag)-strlen(end_tag)-1);
