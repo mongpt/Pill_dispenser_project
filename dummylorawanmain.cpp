@@ -23,7 +23,9 @@ int main(void) {
 
     stdio_init_all();
     buttonInit();
-    lora_connected = loraInit();
+    while (!lora_connected) {
+        lora_connected = loraInit();
+    }
 
     char retval_str[STRLEN];
     char dummy_msg1[STRLEN];
@@ -31,6 +33,7 @@ int main(void) {
     char dummy_msg2[STRLEN];
     strcpy(dummy_msg2, "I am messaging, yay!");
 #if 0
+    /* to set the uart TIMEOUT value: */
     if (true == loraCommunication("AT+UART=TIMEOUT,300\r\n", STD_WAITING_TIME, retval_str)) {
         printf("%s\n",retval_str);
     }
