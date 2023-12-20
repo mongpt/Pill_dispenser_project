@@ -28,7 +28,7 @@ typedef struct lorawan_item_ {
 /**********************************************************************************************************************
  * \brief: Initialises the uart and sets up lorawan communication
  *
- * \param: 
+ * \param:
  *
  * \return: true: if connection established, false: if connection not established
  *
@@ -39,12 +39,12 @@ bool loraInit();
 /**********************************************************************************************************************
  * \brief: Communicates with uart.
  *
- * \param: 3 parameters. Takes the command to be sent, the sleep time to wait before read and the string to read the 
+ * \param: 3 parameters. Takes the command to be sent, the sleep time to wait before read and the string to read the
  *         returned message to.
  *
  * \return: true: if uart responses, false: if uart does not response
  *
- * \remarks: Called by loraInit(), loraMsg(), retvalChecker(). Programmer should not use this function.
+ * \remarks: Called by loraInit(), loraMsg(), retvalChecker(). Can be used directly from main().
  **********************************************************************************************************************/
 bool loraCommunication(const char* command, const uint sleep_time, char* str);
 
