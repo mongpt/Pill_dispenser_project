@@ -13,7 +13,6 @@
 #endif
 
 static const int uart_nr = UART_NR;
-static volatile int lorawanState = 0;
 static lorawan_item lorawan[] = {{"AT\r\n", "+AT: OK\r\n", STD_WAITING_TIME},
                                  {"AT+MODE=LWOTAA\r\n", "+MODE: LWOTAA\r\n", STD_WAITING_TIME},
                                  {"AT+KEY=APPKEY,\"511F30D4D81E7B806536733DE7155FDE\"\r\n", "+KEY: APPKEY 511F30D4D81E7B806536733DE7155FDE\r\n", STD_WAITING_TIME},  // Gemma
@@ -24,46 +23,31 @@ static lorawan_item lorawan[] = {{"AT\r\n", "+AT: OK\r\n", STD_WAITING_TIME},
                                  {"AT+JOIN\r\n", "Network joined\r\n", MSG_WAITING_TIME}};
 
 bool loraInit() {
-    uint count = 0;
     char return_message[STRLEN];
+    int lorawanState = 0;
 
     uart_setup(UART_NR, UART_TX_PIN, UART_RX_PIN, BAUD_RATE);
 
     while (true) {
-        if (0 == lorawanState) {
-            while (MAX_COUNT > count++) {
-                if(true == retvalChecker(lorawanState)) {
-                    lorawanState++;
-                }
-            }
-            if (MAX_COUNT == count) {
-                DBG_PRINT("Attempted to connect 5 times, Lorawan module not responding.\n");
-                return false;
-            }
-        }
-        for (lorawanState; lorawanState < (sizeof(lorawan)/sizeof(lorawan[0]) - 1); lorawanState++) {
+        for (; lorawanState < (sizeof(lorawan)/sizeof(lorawan[0]) - 1); lorawanState++) {
             if (false == retvalChecker(lorawanState)) {
-                lorawanState = 0;
                 return false;
             }
         }
         if (true == loraCommunication(lorawan[lorawanState].command, lorawan[lorawanState].sleep_time, return_message)) {
             if (strstr(return_message, lorawan[lorawanState].retval) != NULL) {
                 DBG_PRINT("Comparison->same for: %s\n", return_message);
-                lorawanState = 0;
                 return true;
             }
         }
-        lorawanState = 0;
         return false;
     }
 }
 
 bool loraCommunication(const char* command, const uint sleep_time, char* str) {
-    int pos = 0;
     uart_send(uart_nr, command);
     sleep_ms(sleep_time);
-    pos = uart_read(UART_NR, (uint8_t *) str, STRLEN - 1);
+    int pos = uart_read(UART_NR, (uint8_t *) str, STRLEN - 1);
     if (pos > 0) {
         str[pos] = '\0';
         return true;
