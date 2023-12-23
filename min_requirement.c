@@ -37,7 +37,7 @@ void gpioIrq(uint gpio, uint32_t events);  //callback function for buttons press
 void blinkMs(uint32_t ms);  //blink the led in ms
 
 const uint8_t in[4] = {in1, in2, in3, in4};
-const uint8_t fwDirection[8][4] = {
+const uint8_t stepsData[8][4] = {
         {1,0,0,0},
         {1,1,0,0},
         {0,1,0,0},
@@ -142,7 +142,7 @@ uint16_t runAndCountSteps(bool optoOutput){
     while (gpio_get(opto) == optoOutput){
         for (int i = nextPos; i < 8; i++){
             for (int j = 0; j < 4; j++)
-                gpio_put(in[j], fwDirection[i][j]);
+                gpio_put(in[j], stepsData[i][j]);
             busy_wait_ms(SPEED);
             stepCalibCount++;
             if (gpio_get(opto) != optoOutput) {
@@ -157,7 +157,8 @@ uint16_t runAndCountSteps(bool optoOutput){
 }
 
 void doCalib(uint16_t *steps){
-    int adjustSteps = 340;  //number of steps to align the wheel with the hole
+    int stepPerOptoChange;  //number of steps while a state of the opto sensor keeps unchanged
+    int adjustSteps;  //number of steps to align the wheel with the hole
     nextPos = 0;
     uint16_t stepCalibCount = 0;  //count total of steps during calibration
     //if the opto is blocked, then run motor until the opto is activated
@@ -175,23 +176,26 @@ void doCalib(uint16_t *steps){
         // run twice because opto reaches 2 states for 1 round
         for (int i = 0; i < 2; i++){
             optoOutput = gpio_get(opto);
-            stepCalibCount += runAndCountSteps(optoOutput);
+            stepPerOptoChange = runAndCountSteps(optoOutput);
+            stepCalibCount += stepPerOptoChange;
         }
     }
+    adjustSteps = stepPerOptoChange / 2;
     *steps = stepCalibCount / CALIB_ROUNDS;
     printf("Adjusting device...\n");
+    uint8_t revPos = nextPos - 2;   //position of step that used in reverse direction
     while (adjustSteps > 0){
-        for (int i = nextPos; i < 8; i++){
+        for (int i = revPos; i >= 0; i--){
             for (int j = 0; j < 4; j++)
-                gpio_put(in[j], fwDirection[i][j]);
+                gpio_put(in[j], stepsData[i][j]);
             busy_wait_ms(SPEED);
             adjustSteps--;
             if (adjustSteps == 0){
                 nextPos = i == 7 ? 0 : i + 1;
                 break;
             }
-            if (i == 7)
-                nextPos = 0;
+            if (i == 0)
+                revPos = 7;
         }
     }
     printf("*** Calibration done ***\n");
@@ -206,7 +210,7 @@ void startDispensation(uint16_t stepPerRev){
     while (stepsToRun > 0){
         for (i = nextPos; i < 8; i++){
             for (int j = 0; j < 4; j++){
-                gpio_put(in[j], fwDirection[i][j]);
+                gpio_put(in[j], stepsData[i][j]);
             }
             busy_wait_ms(SPEED);
             stepsToRun--;
