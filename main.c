@@ -3,26 +3,28 @@
 #include "hardware/i2c.h"
 #include "pill_eeprom.h"
 
-#define in1 13
-#define in2 6
-#define in3 3
-#define in4 2
+#define in1                 13
+#define in2                 6
+#define in3                 3
+#define in4                 2
 #define TX_PIN 4
 #define RX_PIN 5
-#define sw_calib 7  //sw2
-#define sw_start 9  //sw0
-#define led 20
-#define piezo 27
-#define opto 28
-#define SPEED 2
-#define CALIB_ROUNDS 1
-#define DEBOUNCE 30 // debounce timer 30ms
-#define DISPENSING_TIMEOUT 5000000 //timeout for dispensing 1 pill 30s
-#define PILL_DROP_TIME 100  //duration of pill drops from wheel to piezo 100ms
+#define sw_calib            7  //sw2
+#define sw_start            9  //sw0
+#define led                 20
+#define piezo               27
+#define opto                28
+#define SPEED               2
+#define CALIB_ROUNDS        1
+#define DEBOUNCE            30 // debounce timer 30ms
+#define DISPENSING_TIMEOUT  5000000 //timeout for dispensing 1 pill 30s
+#define PILL_DROP_TIME      100  //duration of pill drops from wheel to piezo 100ms
 #define NUM_PILLS_DISPENSED 32767    //store number of pills actually dispensed
 #define NUM_DISPENSED_TIMES 32766   //store number of dispensed times (days): 1-7 times
-#define LAST_CALIB_STEPS 32763  //store number of steps per revolution from the last calibration (2 bytes)
-#define NUMBERLESS (-1)   //indicates that there is no number will be added to the log string
+// address 32765 is reserved for adjustSteps
+#define LAST_CALIB_STEPS    32763  //store number of steps per revolution from the last calibration (2 bytes)
+#define IS_TURNING          32762   //store the state of compartment's turning
+#define NUMBERLESS          (-1)   //indicates that there is no number will be added to the log string
 
 volatile bool pillDetected = false; //true if piezo detects a dropped pill
 
@@ -33,7 +35,7 @@ void doCalib(uint16_t *steps);
 void startDispensation(uint16_t stepPerRev, uint8_t *numPillsDispensed, uint8_t *numDispensedTimes);
 void gpioIrq(uint gpio, uint32_t events);  //callback function for buttons pressed
 void blinkMs(uint32_t ms);  //blink the led in ms
-void reCalib(uint8_t numDispensedTimes, uint16_t *stepPerRev);
+void reCalib(uint8_t numDispensedTimes, uint16_t stepPerRev, int adjustSteps);
 
 const uint8_t in[4] = {in1, in2, in3, in4};
 const uint8_t stepsData[8][4] = {
@@ -47,6 +49,7 @@ const uint8_t stepsData[8][4] = {
         {1,0,0,1}
 };
 static uint8_t nextPos = 0;    //keep track the next step position of motor
+static uint8_t isTurning = 0; //1=a compartment is still turning, 0=stopped
 
 int main() {
     configHardware();
@@ -76,16 +79,25 @@ int main() {
     buff[0] = (uint8_t) (NUM_DISPENSED_TIMES >> 8);
     buff[1] = (uint8_t) NUM_DISPENSED_TIMES;
     eepromRead(buff, &numDispensedTimes, 1);
-    //print data
-    //printf("Number of pills were dispensed: %d\n", numPillsDispensed);
-    //printf("Number of dispensed times: %d/7\n", numDispensedTimes);
-    //recalib if device was reset while dispensing
-    if (numDispensedTimes >= 1 && numDispensedTimes < 7){
+    //check the state of turning progress before boot
+    buff[0] = (uint8_t) (IS_TURNING >> 8);
+    buff[1] = (uint8_t) IS_TURNING;
+    eepromRead(buff, &isTurning, 1);
+    //recall last stepPerRev from eeprom
+    uint8_t stepPerRevBuff[3];
+    buff[0] = (uint8_t) (LAST_CALIB_STEPS >> 8);
+    buff[1] = (uint8_t) LAST_CALIB_STEPS;
+    eepromRead(buff, stepPerRevBuff, 3);
+    stepPerRev = (stepPerRevBuff[0] << 8) | stepPerRevBuff[1];
+    int adjustSteps = stepPerRevBuff[2];
+    if (isTurning || (numDispensedTimes >= 1 && numDispensedTimes < 7)){
         msg = "Device was turned off/reset during turning";
         // write new log to eeprom
         writeEELog(msg, NUMBERLESS);
-        // do recalib device
-        reCalib(numDispensedTimes, &stepPerRev);
+        if (isTurning){
+            // do recalib device
+            reCalib(numDispensedTimes, stepPerRev, adjustSteps);
+        }
         sleep_ms(1000);
         // continue the rest dispensing times
         uint8_t leftTimes = 7 - numDispensedTimes;
@@ -119,6 +131,12 @@ int main() {
                         if (!gpio_get(sw_start)) {
                             gpio_put(led, 0);
                             startDispensing = true;
+                            //update numDispensedTimes & numPillsDispensed to eeprom
+                            buff[0] = (uint8_t) (NUM_DISPENSED_TIMES >> 8);
+                            buff[1] = (uint8_t) NUM_DISPENSED_TIMES;
+                            buff[2] = numDispensedTimes;
+                            buff[3] = numPillsDispensed;
+                            eepromWrite(buff, 4);
                             // run 7 times, each 1/8th rev
                             for (int i = 0; i < 7; i++){
                                 uint64_t startTimeNewDispensation = time_us_64();
@@ -282,6 +300,12 @@ void startDispensation(uint16_t stepPerRev, uint8_t *numPillsDispensed, uint8_t 
     const char *msg;
     uint8_t buff[4];
     int stepsToRun = stepPerRev / 8;
+    isTurning = 1;  //turning started
+    //update data to eeprom
+    buff[0] = (uint8_t) (IS_TURNING >> 8);
+    buff[1] = (uint8_t) IS_TURNING;
+    buff[2] = isTurning;
+    eepromWrite(buff, 3);
     msg = "Pill dispensing...";
     // write new log to eeprom
     writeEELog(msg, NUMBERLESS);
@@ -294,11 +318,17 @@ void startDispensation(uint16_t stepPerRev, uint8_t *numPillsDispensed, uint8_t 
             stepsToRun--;
             if (stepsToRun == 0) {
                 nextPos = i == 7 ? 0 : i + 1;
-                busy_wait_ms(PILL_DROP_TIME);
+                isTurning = 0;  //turning finished
+                //update data to eeprom
+                buff[0] = (uint8_t) (IS_TURNING >> 8);
+                buff[1] = (uint8_t) IS_TURNING;
+                buff[2] = isTurning;
+                eepromWrite(buff, 3);
                 (*numDispensedTimes)++;
                 msg = "Number of dispensed times: ";
                 // write new log to eeprom
                 writeEELog(msg, *numDispensedTimes);
+                busy_wait_ms(PILL_DROP_TIME);
                 if (pillDetected)
                     (*numPillsDispensed)++;
                 //update data to eeprom
@@ -327,15 +357,8 @@ void startDispensation(uint16_t stepPerRev, uint8_t *numPillsDispensed, uint8_t 
     }
 }
 
-void reCalib(uint8_t numDispensedTimes, uint16_t *stepPerRev){
-    //recall last stepPerRev from eeprom
-    uint8_t stepPerRevBuff[3];
-    uint8_t buff[2];
-    buff[0] = (uint8_t) (LAST_CALIB_STEPS >> 8);
-    buff[1] = (uint8_t) LAST_CALIB_STEPS;
-    eepromRead(buff, stepPerRevBuff, 3);
-    *stepPerRev = (stepPerRevBuff[0] << 8) | stepPerRevBuff[1];
-    int adjustSteps = stepPerRevBuff[2];
+void reCalib(uint8_t numDispensedTimes, uint16_t stepPerRev, int adjustSteps){
+
     //turn motor backward until opto changes to 1
     bool optoOutput = gpio_get(opto);
     if (optoOutput){
@@ -354,7 +377,7 @@ void reCalib(uint8_t numDispensedTimes, uint16_t *stepPerRev){
         //adjust the compartment's position
         adjustCompartment(adjustSteps);
         //run forward to continue the dispensation
-        int stepsToRun = (*stepPerRev  / 8) * numDispensedTimes;
+        int stepsToRun = (stepPerRev  / 8) * numDispensedTimes;
         int i;
         while (stepsToRun > 0){
             for (i = nextPos; i < 8; i++){
