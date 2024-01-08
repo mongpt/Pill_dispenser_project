@@ -1,160 +1,121 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
-#include "pill_eeprom.h"
+#include "string.h"
 
-#define in1                 13
-#define in2                 6
-#define in3                 3
-#define in4                 2
-#define TX_PIN 4
-#define RX_PIN 5
-#define sw_calib            7  //sw2
-#define sw_start            9  //sw0
-#define led                 20
-#define piezo               27
-#define opto                28
-#define SPEED               2
-#define CALIB_ROUNDS        1
-#define DEBOUNCE            30 // debounce timer 30ms
-#define DISPENSING_TIMEOUT  5000000 //timeout for dispensing 1 pill 30s
-#define PILL_DROP_TIME      100  //duration of pill drops from wheel to piezo 100ms
-#define NUM_PILLS_DISPENSED 32767    //store number of pills actually dispensed
-#define NUM_DISPENSED_TIMES 32766   //store number of dispensed times (days): 1-7 times
-// address 32765 is reserved for adjustSteps
-#define LAST_CALIB_STEPS    32763  //store number of steps per revolution from the last calibration (2 bytes)
-#define IS_TURNING          32762   //store the state of compartment's turning
-#define NUMBERLESS          (-1)   //indicates that there is no number will be added to the log string
+#define EE_ADDR 0x50
+#define WRITE_CYCLE_TIME 5
+#define sw0 9
+#define sw1 8
+#define sw2 7
+#define led1 22
+#define led2 21
+#define led3 20
+#define CMD_LEN 20
 
-volatile bool pillDetected = false; //true if piezo detects a dropped pill
+typedef struct ledState {
+    uint8_t state;
+    uint8_t not_state;
+} ledState;
 
 void configHardware();
-uint16_t runAndCountSteps(bool optoOutput);
-void adjustCompartment(int adjustSteps);
-void doCalib(uint16_t *steps);
-void startDispensation(uint16_t stepPerRev, uint8_t *numPillsDispensed, uint8_t *numDispensedTimes);
-void gpioIrq(uint gpio, uint32_t events);  //callback function for buttons pressed
-void blinkMs(uint32_t ms);  //blink the led in ms
-void reCalib(uint8_t numDispensedTimes, uint16_t stepPerRev, int adjustSteps);
+void eepromWrite(const uint8_t *data, size_t len);  //write len data bytes to eeprom including 2 bytes word address
+void eepromRead(const uint8_t *addr, uint8_t *dest, size_t len);    // read len data bytes back from eeprom at specified address
+void readEELog();   //read all log from eeprom
+int eraseEELog(); // erase eeprom for logging
+void findNewLogEntry(uint8_t *buf);  // find a new valid entry for new logging
+bool ledStateIsValid(ledState *ls);  // validate the eeprom data for leds states
+void swCB(uint gpio, uint32_t events);  //callback function for buttons pressed
+uint16_t crc16(const uint8_t *data_p, size_t length); //CRC calculation
+void writeEELog(const char *logStr);    //write log to eeprom
+void uartHandler();    //uart handler for read/erase commands
+void handleSwPressed(uint sw, uint led, volatile bool *swPressed, uint64_t timeSwPressed, int *LS);
 
-const uint8_t in[4] = {in1, in2, in3, in4};
-const uint8_t stepsData[8][4] = {
-        {1,0,0,0},
-        {1,1,0,0},
-        {0,1,0,0},
-        {0,1,1,0},
-        {0,0,1,0},
-        {0,0,1,1},
-        {0,0,0,1},
-        {1,0,0,1}
-};
-static uint8_t nextPos = 0;    //keep track the next step position of motor
-static uint8_t isTurning = 0; //1=a compartment is still turning, 0=stopped
+volatile bool sw0Pressed = false;
+volatile bool sw1Pressed = false;
+volatile bool sw2Pressed = false;
+volatile uint64_t timeSw0Pressed;
+volatile uint64_t timeSw1Pressed;
+volatile uint64_t timeSw2Pressed;
+volatile int pos = 0;
+volatile char getCmd = 'N';
+int led1State = 0;
+int led2State = 0;
+int led3State = 0;
 
-int main() {
+int main()
+{
+    //config hardware
     configHardware();
-
-    uint16_t stepPerRev = 0;    //count number of steps for a revolution after calibration
-    bool startDispensing = false;
-    uint8_t numPillsDispensed;  //check the number of pills were actually dispensed
-    uint8_t numDispensedTimes;  //check the number of dispensed times (days), 1-7 times
-    uint8_t buff[4];    //eeprom's addresses used to write/read data
-
-    //read log from eeprom
-    readEELog();
-
-    char *msg; //store log string
-    msg = "Boot";
-    // write new log to eeprom
-    writeEELog(msg, NUMBERLESS);
-
-    // Enable interrupts with callback for piezo sensor
-    gpio_set_irq_enabled_with_callback(piezo, GPIO_IRQ_EDGE_FALL, true, &gpioIrq);
-
-    //check number of pills were dispensed before boot
-    buff[0] = (uint8_t) (NUM_PILLS_DISPENSED >> 8);
-    buff[1] = (uint8_t) NUM_PILLS_DISPENSED;
-    eepromRead(buff, &numPillsDispensed, 1);
-    //check number of dispensed times before boot
-    buff[0] = (uint8_t) (NUM_DISPENSED_TIMES >> 8);
-    buff[1] = (uint8_t) NUM_DISPENSED_TIMES;
-    eepromRead(buff, &numDispensedTimes, 1);
-    //check the state of turning progress before boot
-    buff[0] = (uint8_t) (IS_TURNING >> 8);
-    buff[1] = (uint8_t) IS_TURNING;
-    eepromRead(buff, &isTurning, 1);
-    //recall last stepPerRev from eeprom
-    uint8_t stepPerRevBuff[3];
-    buff[0] = (uint8_t) (LAST_CALIB_STEPS >> 8);
-    buff[1] = (uint8_t) LAST_CALIB_STEPS;
-    eepromRead(buff, stepPerRevBuff, 3);
-    stepPerRev = (stepPerRevBuff[0] << 8) | stepPerRevBuff[1];
-    int adjustSteps = stepPerRevBuff[2];
-    if (isTurning || (numDispensedTimes >= 1 && numDispensedTimes < 7)){
-        msg = "Device was turned off/reset during turning";
-        // write new log to eeprom
-        writeEELog(msg, NUMBERLESS);
-        if (isTurning){
-            // do recalib device
-            reCalib(numDispensedTimes, stepPerRev, adjustSteps);
-        }
-        sleep_ms(1000);
-        // continue the rest dispensing times
-        uint8_t leftTimes = 7 - numDispensedTimes;
-        for (int x = 0; x < leftTimes; x++){
-            uint64_t startTimeNewDispensation = time_us_64();
-            startDispensation(stepPerRev, &numPillsDispensed, &numDispensedTimes);
-            while (time_us_64() - startTimeNewDispensation < DISPENSING_TIMEOUT);    //wait until timeout 30s
-        }
-        msg = "Dispenser is empty!";
-        // write new log to eeprom
-        writeEELog(msg, NUMBERLESS);
+    uint8_t bufLedState[4]; // 2 bytes address + 2 bytes data
+    char logStr[61] = "\0";
+    // Convert the integer to a string
+    char timestampStr[20];  // Adjust the size based on your needs
+    sprintf(timestampStr, "%llus; ", time_us_64() / 1000000);
+    strcat(logStr, "Elapsed time: ");
+    strcat(logStr, timestampStr);
+    strcat(logStr, "Boot; "); // store log string
+    // write the "Boot" log to eeprom when the device starts
+    writeEELog(logStr);
+    // prepare data to recall leds states from eeprom
+    bufLedState[0] = 0x7F; //msb
+    bufLedState[1] = 0xFE;  //lsb
+    //buf[2] = 0xFF; //data
+    uint8_t ledStateData[2] = {0,0};
+    //recall last states of LEDs stored in eeprom
+    eepromRead(bufLedState, ledStateData, 2);
+    ledState ls = {.state = ledStateData[0], .not_state = ledStateData[1]};
+    //validate led state
+    if (ledStateIsValid(&ls)){
+        // change led state according to the data
+        // define state of each led
+        led1State = ls.state & 0x1;
+        led2State = (ls.state >> 1) & 0x1;
+        led3State = (ls.state >> 2) & 0x1;
+        gpio_put(led1, led1State);
+        gpio_put(led2, led2State);
+        gpio_put(led3, led3State);
     }
+    else{
+        led2State = 1;
+        gpio_put(led2, led2State);
+        ls.state = 0x02; //010b
+        bufLedState[2] = ls.state;
+        bufLedState[3] = ~ls.state;
+        eepromWrite(bufLedState, 4);
+    }
+    printf("Elapsed time: %llus; ", time_us_64() / 1000000);
+    printf("%s", led1State == 1 ? "1 ON; " : "1 OFF; ");
+    printf("%s", led2State == 1 ? "2 ON; " : "2 OFF; ");
+    printf("%s\n", led3State == 1 ? "3 ON; " : "3 OFF; ");
+    printf("------------------------------\n");
+    // Enable interrupts with callback for switches
+    gpio_set_irq_enabled_with_callback(sw0, GPIO_IRQ_EDGE_FALL, true, &swCB);
+    gpio_set_irq_enabled_with_callback(sw1, GPIO_IRQ_EDGE_FALL, true, &swCB);
+    gpio_set_irq_enabled_with_callback(sw2, GPIO_IRQ_EDGE_FALL, true, &swCB);
+    // enable uart interrupt
+    irq_set_exclusive_handler(UART0_IRQ, uartHandler);
+    irq_set_enabled(UART0_IRQ, true);
+    uart_set_irq_enables(uart0, true, false);
 
     while (1){
-        //reset data before starting a new turn
-        numDispensedTimes = 0;
-        numPillsDispensed = 0;
-        pillDetected = false;
-        startDispensing = false;
-        while (gpio_get(sw_calib))
-            blinkMs(100);
-        if (!gpio_get(sw_calib)){
-            sleep_ms(DEBOUNCE);
-            if (!gpio_get(sw_calib)){
-                gpio_put(led, 1);
-                doCalib(&stepPerRev);
-                while (!gpio_get(sw_calib));    //wait for sw_calib released
-                while (!startDispensing) {
-                    if (!gpio_get(sw_start)){
-                        sleep_ms(DEBOUNCE);
-                        if (!gpio_get(sw_start)) {
-                            gpio_put(led, 0);
-                            startDispensing = true;
-                            //update numDispensedTimes & numPillsDispensed to eeprom
-                            buff[0] = (uint8_t) (NUM_DISPENSED_TIMES >> 8);
-                            buff[1] = (uint8_t) NUM_DISPENSED_TIMES;
-                            buff[2] = numDispensedTimes;
-                            buff[3] = numPillsDispensed;
-                            eepromWrite(buff, 4);
-                            // run 7 times, each 1/8th rev
-                            for (int i = 0; i < 7; i++){
-                                uint64_t startTimeNewDispensation = time_us_64();
-                                startDispensation(stepPerRev, &numPillsDispensed, &numDispensedTimes);
-                                while (time_us_64() - startTimeNewDispensation < DISPENSING_TIMEOUT);    //wait until timeout 30s
-                            }
-                            msg = "Dispenser is empty!";
-                            // write new log to eeprom
-                            writeEELog(msg, NUMBERLESS);
-
-                            msg = "Number of dispensed pills: ";
-                            // write new log to eeprom
-                            writeEELog(msg, numPillsDispensed);
-                            while (!gpio_get(sw_start));    //wait for sw_start released
-                        }
-                    }
-                }
-            }
+        if (sw0Pressed)
+            handleSwPressed(sw0, led1, &sw0Pressed, timeSw0Pressed, &led1State);
+        if (sw1Pressed)
+            handleSwPressed(sw1, led2, &sw1Pressed, timeSw1Pressed, &led2State);
+        if (sw2Pressed)
+            handleSwPressed(sw2, led3, &sw2Pressed, timeSw2Pressed, &led3State);
+        if (getCmd == 'R'){
+            readEELog();
+            getCmd = 'N';
+            uart_puts(uart0 ,"------------------------------\n");
+        }
+        if (getCmd == 'E'){
+            // erase eeprom
+            while(eraseEELog());    // if this function return 1 (means erasing did not succeed) then do again
+            uart_puts(uart0,"*** EEPROM erased successfully ***\n");
+            uart_puts(uart0 ,"------------------------------\n");
+            getCmd = 'N';
         }
     }
     return 0;
@@ -163,237 +124,232 @@ int main() {
 //config hardware
 void configHardware(){
     stdio_init_all();
-    // Config switches
-    gpio_set_function(sw_calib, GPIO_FUNC_SIO);
-    gpio_set_dir(sw_calib, false);
-    gpio_pull_up(sw_calib);
-    gpio_set_function(sw_start, GPIO_FUNC_SIO);
-    gpio_set_dir(sw_start, false);
-    gpio_pull_up(sw_start);
-    // config led
-    gpio_set_function(led, GPIO_FUNC_SIO);
-    gpio_set_dir(led, true);
-    gpio_set_function(led, GPIO_FUNC_SIO);
+    // Config switches and LEDs
+    gpio_set_function(sw0, GPIO_FUNC_SIO);
+    gpio_set_dir(sw0, false);
+    gpio_pull_up(sw0);
+    gpio_set_function(sw1, GPIO_FUNC_SIO);
+    gpio_set_dir(sw1, false);
+    gpio_pull_up(sw1);
+    gpio_set_function(sw2, GPIO_FUNC_SIO);
+    gpio_set_dir(sw2, false);
+    gpio_pull_up(sw2);
+    gpio_set_function(led1, GPIO_FUNC_SIO);
+    gpio_set_dir(led1, true);
+    gpio_set_function(led2, GPIO_FUNC_SIO);
+    gpio_set_dir(led2, true);
+    gpio_set_function(led3, GPIO_FUNC_SIO);
+    gpio_set_dir(led3, true);
     // config i2c
     i2c_init(i2c0, 100 * 1000);
     gpio_set_function(16, GPIO_FUNC_I2C);
     gpio_set_function(17, GPIO_FUNC_I2C);
-    // config stepper
-    gpio_init(in1);
-    gpio_set_dir(in1, GPIO_OUT);
-    gpio_init(in2);
-    gpio_set_dir(in2, GPIO_OUT);
-    gpio_init(in3);
-    gpio_set_dir(in3, GPIO_OUT);
-    gpio_init(in4);
-    gpio_set_dir(in4, GPIO_OUT);
-    // config dispenser
-    gpio_set_function(opto, GPIO_FUNC_SIO);
-    gpio_set_dir(opto, false);
-    gpio_pull_up(opto);
-    gpio_set_function(piezo, GPIO_FUNC_SIO);
-    gpio_set_dir(piezo, false);
-    gpio_pull_up(piezo);
 }
 
-// interrupt handler for gpio
-void gpioIrq(uint gpio, uint32_t events){
-    if (gpio == piezo)
-        pillDetected = true;
+//write len data bytes to eeprom including 2 bytes word address
+void eepromWrite(const uint8_t *data, size_t len){
+    i2c_write_blocking(i2c0, EE_ADDR, data, len,false);
+    sleep_ms(WRITE_CYCLE_TIME);
 }
 
-void blinkMs(uint32_t ms){
-    gpio_put(led, 1);
-    sleep_ms(ms);
-    gpio_put(led, 0);
-    sleep_ms(ms);
+// read len data bytes back from eeprom at specified address
+void eepromRead(const uint8_t *addr, uint8_t *dest, size_t len){
+    i2c_write_blocking(i2c0, EE_ADDR, addr,2,true);
+    sleep_ms(WRITE_CYCLE_TIME);
+    i2c_read_blocking(i2c0,EE_ADDR, dest, len, false);
 }
 
-uint16_t runAndCountSteps(bool optoOutput){
-    uint16_t stepCalibCount = 0;
-    while (gpio_get(opto) == optoOutput){
-        for (int i = nextPos; i < 8; i++){
-            for (int j = 0; j < 4; j++)
-                gpio_put(in[j], stepsData[i][j]);
-            busy_wait_ms(SPEED);
-            stepCalibCount++;
-            if (gpio_get(opto) != optoOutput) {
-                nextPos = i == 7 ? 0 : i + 1;
-                break;
-            }
-        }
-        if (gpio_get(opto) == optoOutput)
-            nextPos = 0;
-    }
-    return stepCalibCount;
-}
-
-void adjustCompartment(int adjustSteps){
-    printf("Adjusting device...\n");
-    uint8_t revPos;
-    if (nextPos == 0)
-        revPos = 6;
-    else if (nextPos == 1)
-        revPos = 7;
-    else
-        revPos = nextPos - 2;
-    while (adjustSteps > 0){
-        for (int i = revPos; i >= 0; i--){
-            for (int j = 0; j < 4; j++)
-                gpio_put(in[j], stepsData[i][j]);
-            busy_wait_ms(SPEED);
-            adjustSteps--;
-            if (adjustSteps == 0){
-                nextPos = i == 7 ? 0 : i + 1;
-                break;
-            }
-            if (i == 0)
-                revPos = 7;
-        }
-    }
-    printf("*** Calibration done ***\n");
-    printf("------------------------------\n");
-}
-
-void doCalib(uint16_t *steps){
-    const char *msg;
-    uint8_t buff[5];    //store number of steps per revolution to eeprom
-    int stepPerOptoChange;  //number of steps while a state of the opto sensor keeps unchanged
-    int adjustSteps;  //number of steps to align the wheel with the hole
-    nextPos = 0;
-    uint16_t stepCalibCount = 0;  //count total of steps during calibration
-    //if the opto is blocked, then run motor until the opto is activated
-    msg = "Device calibrating...";
-    // write new log to eeprom
-    writeEELog(msg, NUMBERLESS);
-    bool optoOutput = gpio_get(opto);
-    if (optoOutput){
-        runAndCountSteps(optoOutput);
-        optoOutput = gpio_get(opto);
-    }
-    //run motor to the position where it blocks the opto
-    runAndCountSteps(optoOutput);
-    stepCalibCount = 0; // reset this to start calib
-    // start to run and count steps for n rounds
-    for (int round = 0; round < CALIB_ROUNDS; round++){
-        // run twice because opto reaches 2 states for 1 round
-        for (int i = 0; i < 2; i++){
-            optoOutput = gpio_get(opto);
-            stepPerOptoChange = runAndCountSteps(optoOutput);
-            stepCalibCount += stepPerOptoChange;
-        }
-    }
-    adjustSteps = stepPerOptoChange / 2;
-    *steps = stepCalibCount / CALIB_ROUNDS;
-    buff[0] = (uint8_t) (LAST_CALIB_STEPS >> 8);
-    buff[1] = (uint8_t) LAST_CALIB_STEPS;
-    buff[2] = (uint8_t) (*steps >> 8);
-    buff[3] = (uint8_t) *steps;
-    buff[4] = adjustSteps;
-    eepromWrite(buff, 5);
-    //adjust the compartment's position
-    adjustCompartment(adjustSteps);
-}
-
-void startDispensation(uint16_t stepPerRev, uint8_t *numPillsDispensed, uint8_t *numDispensedTimes){
-    int i;
-    const char *msg;
-    uint8_t buff[4];
-    int stepsToRun = stepPerRev / 8;
-    isTurning = 1;  //turning started
-    //update data to eeprom
-    buff[0] = (uint8_t) (IS_TURNING >> 8);
-    buff[1] = (uint8_t) IS_TURNING;
-    buff[2] = isTurning;
-    eepromWrite(buff, 3);
-    msg = "Pill dispensing...";
-    // write new log to eeprom
-    writeEELog(msg, NUMBERLESS);
-    while (stepsToRun > 0){
-        for (i = nextPos; i < 8; i++){
-            for (int j = 0; j < 4; j++){
-                gpio_put(in[j], stepsData[i][j]);
-            }
-            busy_wait_ms(SPEED);
-            stepsToRun--;
-            if (stepsToRun == 0) {
-                nextPos = i == 7 ? 0 : i + 1;
-                isTurning = 0;  //turning finished
-                //update data to eeprom
-                buff[0] = (uint8_t) (IS_TURNING >> 8);
-                buff[1] = (uint8_t) IS_TURNING;
-                buff[2] = isTurning;
-                eepromWrite(buff, 3);
-                (*numDispensedTimes)++;
-                msg = "Number of dispensed times: ";
-                // write new log to eeprom
-                writeEELog(msg, *numDispensedTimes);
-                busy_wait_ms(PILL_DROP_TIME);
-                if (pillDetected)
-                    (*numPillsDispensed)++;
-                //update data to eeprom
-                buff[0] = (uint8_t) (NUM_DISPENSED_TIMES >> 8);
-                buff[1] = (uint8_t) NUM_DISPENSED_TIMES;
-                buff[2] = *numDispensedTimes;
-                buff[3] = *numPillsDispensed;
-                eepromWrite(buff, 4);
-                if (pillDetected){
-                    pillDetected = false;
-                    msg = "Pill detected";
-                    // write new log to eeprom
-                    writeEELog(msg, NUMBERLESS);
-                } else{
-                    msg = "No pill detected";
-                    // write new log to eeprom
-                    writeEELog(msg, NUMBERLESS);
-                    for (int x = 0; x < 5; x++)
-                        blinkMs(300);
-                }
-                break;
-            }
-        }
-        if (i == 8)
-            nextPos = 0;
-    }
-}
-
-void reCalib(uint8_t numDispensedTimes, uint16_t stepPerRev, int adjustSteps){
-
-    //turn motor backward until opto changes to 1
-    bool optoOutput = gpio_get(opto);
-    if (optoOutput){
-        //run backward until opto = 0
-        while (gpio_get(opto) == optoOutput){
-            for (int i = 7; i >= 0; i--){
-                for (int j = 0; j < 4; j++)
-                    gpio_put(in[j], stepsData[i][j]);
-                busy_wait_ms(SPEED);
-                if (gpio_get(opto) != optoOutput) {
-                    nextPos = i == 7 ? 0 : i + 1;
+void readEELog(){
+    printf("\n");
+    // read log from eeprom
+    uint8_t logData[64] = {0};
+    uint8_t buf[3];
+    bool foundLog = false;
+    for (int i = 0; i < 2048; i += 64){
+        buf[0] = (uint8_t) (i >> 8);  //msb
+        buf[1] = (uint8_t) i;  //lsb
+        eepromRead(buf, &buf[2], 1);
+        if (buf[2]){ // found a valid log entry
+            foundLog = true;
+            eepromRead(buf, logData, 64);
+            int zero_idx;
+            for (zero_idx = 0; zero_idx < 62; zero_idx++){   // find index of 0 before CRC value
+                if (logData[zero_idx] == 0){    //found 0 at zero_idx position
+                    if (crc16(logData, zero_idx+3) == 0)
+                        printf("%s\n", logData);
                     break;
                 }
             }
         }
-        //adjust the compartment's position
-        adjustCompartment(adjustSteps);
-        //run forward to continue the dispensation
-        int stepsToRun = (stepPerRev  / 8) * numDispensedTimes;
-        int i;
-        while (stepsToRun > 0){
-            for (i = nextPos; i < 8; i++){
-                for (int j = 0; j < 4; j++){
-                    gpio_put(in[j], stepsData[i][j]);
-                }
-                busy_wait_ms(SPEED);
-                stepsToRun--;
-                if (stepsToRun == 0) {
-                    nextPos = i == 7 ? 0 : i + 1;
-                    busy_wait_ms(PILL_DROP_TIME);
-                    break;
-                }
+    }
+    if (!foundLog)
+        uart_puts(uart0, "No log found\n");
+}
+
+int eraseEELog(){
+    uint8_t buf[3];
+    buf[2] = 0x00;  //data
+    for (int i = 0; i < 2048; i += 64){
+        buf[0] = (uint8_t) (i >> 8);  //msb
+        buf[1] = (uint8_t) i;  //lsb
+        eepromWrite(buf, 3);
+    }
+
+    // validate
+    for (int i = 0; i < 2048; i += 64){
+        buf[0] = (uint8_t) (i >> 8);  //msb
+        buf[1] = (uint8_t) i;  //lsb
+        eepromRead(buf, &buf[2], 1);
+        if (buf[2])
+            return 1;
+    }
+    return 0;
+}
+
+// find a new valid entry for new logging
+void findNewLogEntry(uint8_t *buf){
+    uint8_t data;
+    for (int i = 0; i < 2048; i += 64){
+        buf[0] = (uint8_t) (i >> 8);  //msb
+        buf[1] = (uint8_t) i;  //lsb
+        eepromRead(buf, &data, 1);
+        if (!data) // found a valid address if its data is 0
+            break;
+    }
+    if (data){  //all log entries are not available, need to erase them
+        while(eraseEELog());    // if this function return 1 (means erasing did not succeed) then do again
+        buf[0] = 0x00;
+        buf[1] = 0x00;
+    }
+}
+
+bool ledStateIsValid(ledState *ls){
+    return ls->state == (uint8_t) ~ls->not_state;
+}
+
+// callback function when rotating encoder
+void swCB(uint gpio, uint32_t events) {
+    if (gpio == sw0){
+        sw0Pressed = true;
+        timeSw0Pressed = time_us_64();
+    }
+    else if (gpio == sw1){
+        sw1Pressed = true;
+        timeSw1Pressed = time_us_64();
+    }
+    else if (gpio == sw2){
+        sw2Pressed = true;
+        timeSw2Pressed = time_us_64();
+    }
+}
+
+//CRC calculation
+uint16_t crc16(const uint8_t *data_p, size_t length) {
+    uint8_t x;
+    uint16_t crc = 0xFFFF;
+    while (length--) {
+        x = crc >> 8 ^ *data_p++;
+        x ^= x >> 4;
+        crc = (crc << 8) ^ ((uint16_t) (x << 12)) ^ ((uint16_t) (x << 5)) ^ ((uint16_t) x);
+    }
+    return crc;
+}
+
+//write log to eeprom
+void writeEELog(const char *logStr){
+    uint8_t length = strlen(logStr);
+    //trim log string if it exceeds 61 chars
+    if (length > 61)
+        length = 61;
+    uint8_t bufLogging[length+3]; // 2 bytes address + log string + \0 + 2 bytes CRC
+    uint8_t tempData[length+1]; //log string + \0
+    // find the next log address for new log
+    findNewLogEntry(bufLogging);    // get data for bufLogging[0] and bufLogging[1]
+    for (int i = 0; i < length; i++)
+        bufLogging[i+2] = logStr[i];
+    bufLogging[length+2] = '\0';
+    memcpy(tempData, logStr, strlen(logStr));
+    tempData[length] = '\0';
+    // calculate CRC then store it at idx+3 and idx+4 location
+    uint16_t crc = crc16(tempData, sizeof(tempData));
+    bufLogging[length+3] = (uint8_t) (crc >> 8);
+    bufLogging[length+4] = (uint8_t) crc;
+    // write log to eeprom
+    eepromWrite(bufLogging, length+5);
+}
+
+void uartHandler(){
+    char uartData[CMD_LEN];
+    while (uart_is_readable_within_us(uart0, 1000)){
+        char c = uart_getc(uart0);
+        if (c == '\r' || c == '\n') {
+            uartData[pos] = '\0';  // Null-terminate the string
+            pos = 0;
+            // after getting '\r' or '\n' then clear the rest in rev buff
+            while (uart_is_readable_within_us(uart0, 500))
+                uart_getc(uart0);
+            if (strcmp(uartData, "read") == 0)
+                getCmd = 'R';
+            else if (strcmp(uartData, "erase") == 0)
+                getCmd = 'E';
+            else {
+                printf("unknown command\n");
+                printf("------------------------------\n");
             }
-            if (i == 8)
-                nextPos = 0;
+        } else {
+            if (pos < CMD_LEN-1) {
+                uartData[pos++] = c;
+            }
+        }
+    }
+}
+
+void handleSwPressed(uint sw, uint led, volatile bool *swPressed, uint64_t timeSwPressed, int *LS){
+    uint8_t filter = 0x00;
+    uint8_t shiftBit = 0;
+    switch (sw) {
+        case sw0:
+            filter = 0xFE;
+            shiftBit = 0;
+            break;
+        case sw1:
+            filter = 0xFD;
+            shiftBit = 1;
+            break;
+        case sw2:
+            filter = 0xFB;
+            shiftBit = 2;
+            break;
+        default:
+            break;
+    }
+    uint8_t bufLedState[4];
+    bufLedState[0] = 0x7F; //msb
+    bufLedState[1] = 0xFE;  //lsb
+    if ((time_us_64() - timeSwPressed) >= 30000){
+        if (!gpio_get(sw)){
+            *swPressed = false;
+            *LS = !*LS;
+            gpio_put(led, *LS);
+            ledState ls = {.state = 0x00, .not_state = 0xFF};
+            // write led state to eeprom
+            ls.state |= led3State << 2 | led2State << 1 | led1State;
+            ls.state = (ls.state & filter) | (*LS << shiftBit);
+            bufLedState[2] = ls.state;
+            bufLedState[3] = ~ls.state;
+            eepromWrite(bufLedState, 4);
+            // write new log to eeprom
+            char newStr[61] = "\0";
+            // Convert the integer to a string
+            char timestampStr[20];  // Adjust the size based on your needs
+            sprintf(timestampStr, "%llus; ", time_us_64() / 1000000);
+            strcat(newStr, "Elapsed time: ");
+            strcat(newStr, timestampStr);
+            strcat(newStr, led1State == 1 ? "1 ON; " : "1 OFF; ");
+            strcat(newStr, led2State == 1 ? "2 ON; " : "2 OFF; ");
+            strcat(newStr, led3State == 1 ? "2 ON; " : "2 OFF; ");
+            printf("%s\n", newStr);
+            writeEELog(newStr);
         }
     }
 }
