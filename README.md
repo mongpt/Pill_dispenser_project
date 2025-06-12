@@ -1,6 +1,6 @@
 # 💊 Pill Dispenser Project
 
-This repository contains the implementation details for the Pill Dispenser, a second-year hardware project developed at Metropolia University of Applied Sciences by Milan Dang, Mong Phan, and Gemma Qin, submitted on January 14, 2024. The project aims to create an automated pill dispenser to improve medication adherence by dispensing daily medications at preset times, with real-time monitoring and logging capabilities.
+This repository contains the implementation details for the Pill Dispenser, a second-year hardware project developed at Metropolia University of Applied Sciences by Xuan Dang, Mong Phan, and Gemma Qin, submitted on January 14, 2024. The project aims to create an automated pill dispenser to improve medication adherence by dispensing daily medications at preset times, with real-time monitoring and logging capabilities.
 
 ## 📖 Project Report
 
