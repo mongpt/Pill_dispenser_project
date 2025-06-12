@@ -77,6 +77,16 @@ The system was tested for:
   - Upgrade to a more robust stepper motor for reliability.
   - Optimize LoRaWAN messaging for faster updates.
 
+---
+
+## 📌 Contributors
+
+- **Mong Phan**
+- **Gemma Qin**
+- **Xuan Dang**
+
+---
+
 ## ⚖️ License
 
 This project was developed for academic purposes at **Metropolia University of Applied Sciences**. Users can freely use this project for educational purpose ONLY.
