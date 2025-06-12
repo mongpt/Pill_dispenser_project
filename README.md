@@ -4,7 +4,7 @@ This repository contains the implementation details for the Pill Dispenser, a se
 
 ## 📖 Project Report
 
-The full project report is available here `Pill_Dispenser_Report_G02.pdf`.
+The full project report is available here [Pill_Dispenser_Report_G02.pdf](Pill_Dispenser_Report_G02.pdf).
 
 ## 📝 Project Overview
 
@@ -31,16 +31,6 @@ The system uses a Raspberry Pi Pico WH as the core processing unit, paired with 
 - 6-pin JST and 4-pin Grove connectors
 - Power supply (5V, suitable for Pico and motor)
 
-## 🔧 Installation
-
-**🛠 Hardware Setup**:
-   - Assemble the dispenser base and wheel using the 3D-printed parts in `hardware/3d_models/`.
-   - Connect the stepper motor to the ULN2003 driver and wire to Pico pins GP2, GP3, GP6, GP13.
-   - Attach the optical sensor to GP28 and piezoelectric sensor to GP27 (both with pull-up configuration).
-   - Connect the Grove LoRa-E5 module to UART1 (GP4, GP5) or UART0 (GP0, GP1, if UART stdio is disabled).
-   - Wire the I2C EEPROM to the Pico’s I2C bus.
-   - Use the 6-pin JST connector to link the dispenser base to the stepper driver and the 4-pin Grove connector to the ADC_1 port.
-
 ## 🚀 Usage
 
 1. **🤖 Run the Dispenser**:
@@ -50,7 +40,7 @@ The system uses a Raspberry Pi Pico WH as the core processing unit, paired with 
    - If no pill is detected, the LED blinks five times. After seven dispenses, the system resets to calibration mode.
 
 2. **📡 Monitor via LoRaWAN**:
-   - Configure the LoRaWAN module using AT commands (see `LoRa-E5_AT_Command_Specification_V1.0.pdf` for details):
+   - Configure the LoRaWAN module using AT commands (see [LoRa-E5_AT_Command_Specification_V1.0.pdf](LoRa-E5_AT_Command_Specification_V1.0.pdf) for details):
      ```plaintext
      +MODE=LWOTAA
      +KEY=APPKEY,"<your-hex-key>"
@@ -75,8 +65,6 @@ The system was tested for:
 - **✅ Dispensing**: The piezoelectric sensor confirmed pill dispensing with high reliability.
 - **🌐 Communication**: LoRaWAN successfully transmitted status updates, though with a 10-second delay per message.
 - **💾 Persistence**: EEPROM stored device state across power cycles.
-
-Challenges included mechanical issues with the dispenser wheel and delays due to LoRaWAN setup. See `docs/test_results/` for detailed test data.
 
 ## ⚠️ Limitations and Future Work
 
