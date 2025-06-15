@@ -1,6 +1,13 @@
 # 💊 Pill Dispenser Project
 
-This repository contains the implementation details for the Pill Dispenser, a second-year hardware project developed at Metropolia University of Applied Sciences by Xuan Dang, Mong Phan, and Gemma Qin, submitted on January 14, 2024. The project aims to create an automated pill dispenser to improve medication adherence by dispensing daily medications at preset times, with real-time monitoring and logging capabilities.
+This repository contains the implementation details for the Pill Dispenser, a second-year hardware project developed at Metropolia University of Applied Sciences by Xuan Dang, Mong Phan, and Gemma Qin, submitted on January 14, 2024.   
+A prototype smart pill dispenser developed as a second-year embedded systems project on the Raspberry Pi
+              Pico W, using a bare-metal architecture. The system automates daily medication delivery with an
+              8-compartment rotary mechanism driven by a stepper motor and validated through a piezoelectric sensor. An
+              optical fork sensor ensures precise wheel calibration, while an EEPROM module logs system states and
+              events. The dispenser communicates its status over LoRaWAN using the Grove LoRa-E5 module, enabling remote
+              monitoring. Designed for reliability and ease of use, this project demonstrates practical embedded
+              hardware integration for healthcare and assistive technologies.
 
 ## 📖 Project Report
 
